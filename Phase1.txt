@@ -16,11 +16,3 @@ and evaluate using **Leave-One-Domain-Out** strategy.
 - Evaluation: Accuracy, Precision, Recall, F1  
 - Interface: Command-Line (CLI)
 
-##  Run Project
-
-```bash
-# 1. Install dependencies
-pip install -r requirements.txt
-
-# 2. Run main program
-python main.py
