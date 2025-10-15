@@ -1,0 +1,44 @@
+
+### **Improvement Summary PHASE:2**
+
+*   **Area: Preprocessing**
+    *   **Current:** Lowercasing, stopword removal, tokenization
+    *   **Improvement Planned:** Lemmatization, handle special chars (URLs, emojis), more robust cleaning
+
+*   **Area: Feature Extraction**
+    *   **Current:** TF-IDF
+    *   **Improvement Planned:** BERT embeddings as feature extractor (no Word2Vec needed)
+
+*   **Area: Model**
+    *   **Current:** Logistic Regression
+    *   **Improvement Planned:** Try SVM, Random Forest, and simple Voting Ensemble
+
+*   **Area: Hyperparameter Tuning**(skipping for now/Future Improvement)
+    *   **Current:**  Not used
+    *   **Improvement Planned:** Basic GridSearchCV / RandomizedSearchCV for better model selection
+
+*   **Area: Evaluation**
+    *   **Current:** Accuracy, Precision, Recall, F1
+    *   **Improvement Planned:** Confusion Matrix, Cross-validation
+
+*   **Area: Cross-Domain**
+    *   **Current:** Leave-One-Domain-Out (manual)
+    *   **Improvement Planned:** `--eval` mode to automate evaluation on unseen domains
+
+*   **Area: Data Engineering**
+    *   **Current:** Real dataset only
+    *   **Improvement Planned:** Skipped (to keep project simple)
+
+*   **Area: Interface**(phase-3)
+    *   **Current:** CLI
+    *   **Improvement Planned:** Web interface later (Flask / Streamlit)
+
+*   **Area: Explainability**(phase-3)
+    *   **Current:**  Not added
+    *   **Improvement Planned:** LIME / SHAP planned for later phase
+
+
+    ### **Simple leanrning after completing PHASE:2**
+        **Decreased dataset sample size temporarily to make BERT training & testing much faster (→ useful for debugging).**
+        **Learned to use --eval flag in main.py to switch between training modes easily.**
+        **Added temporary “speed hacks” like sample limiting for faster iteration during development. (→ remove later for final training)**
