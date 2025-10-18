@@ -1,0 +1,35 @@
+# **Fake Review Detection (BERT + Ensemble) – Colab Training Pipeline**
+**STEPS:**
+
+## **1.Mounted Google Drive to save and access files easily.**
+
+## **2.Installed required dependencies:**
+pandas, numpy, scikit-learn, transformers, torch, joblib, tqdm, and nltk.
+
+## **3.Imported necessary libraries such as BertTokenizer, BertModel, torch, and preprocessing utilities.**
+
+## **4.Created helper scripts:**
+-preprocess.py → handled text cleaning and tokenization.
+-utils.py → handled data loading and splitting.
+-model.py → defined training functions for ML models.
+
+## **5.Loaded dataset and kept only valid labeled reviews.**
+
+## **6.Generated BERT embeddings using bert-base-uncased.**
+
+## **7.Split dataset into training (16,000 samples) and testing (4,000 samples).**
+
+## **8.Trained three classifiers:**
+-Logistic Regression (max_iter=700)
+-Linear SVM (max_iter=3000)
+-Random Forest (n_estimators=30)
+
+## **9.Combined models using Voting Ensemble for final prediction.**
+
+## **10.Evaluated model – achieved:
+-Accuracy: 0.8960
+-Precision: 0.8973
+-Recall: 0.9983
+-F1 Score: 0.9451
+
+## **11.Saved the final trained model as bert_fake_review_model.pkl.**

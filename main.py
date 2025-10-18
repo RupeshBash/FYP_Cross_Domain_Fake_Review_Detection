@@ -22,7 +22,7 @@ def main():
     df = preprocess_dataframe(df)
 
     #  TEMPORARY SAMPLING FOR FAST TESTING (REMOVE LATER FOR FULL TRAINING)
-    df = df.groupby('domain').apply(lambda x: x.sample(n=min(100, len(x)), random_state=42)).reset_index(drop=True)
+    # df = df.groupby('domain').apply(lambda x: x.sample(n=min(100, len(x)), random_state=42)).reset_index(drop=True)
 
     domains = df['domain'].unique()
 

@@ -1,4 +1,30 @@
-pandas
+# Core scientific and ML libraries
 numpy
+pandas
 scikit-learn
+tensorflow
+keras
+joblib
+
+# Text processing and NLP
 nltk
+textblob
+spacy
+
+# Visualization (optional but useful for analysis)
+matplotlib
+seaborn
+
+# Utility
+tqdm
+
+# Web app / deployment
+streamlit
+
+# For CSV/Excel I/O
+openpyxl
+
+# To prevent version mismatch issues (optional pinning)
+# numpy>=1.24
+# pandas>=2.0
+# scikit-learn>=1.3

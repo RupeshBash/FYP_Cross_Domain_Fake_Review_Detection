@@ -12,29 +12,32 @@ def load_datasets():
     """Load and merge Amazon, Hotel, and Yelp datasets."""
 
     # --- Amazon Fine Food Reviews ---
-    amazon_df = pd.read_csv("data/Reviews.csv").sample(1000, random_state=42)  #replace this last ma hai, its only using 1000 rows for faster testing
+    # ⚠️ NOTE: During functional testing, you can uncomment `.sample(1000)` for faster loading.
+    amazon_df = pd.read_csv("data/Reviews.csv")  
+    # amazon_df = pd.read_csv("data/Reviews.csv").sample(1000, random_state=42)  # ← Use this only for quick testing
+
     if 'Text' in amazon_df.columns and 'Score' in amazon_df.columns:
         amazon_df['label'] = amazon_df['Score'].apply(lambda x: 1 if x >= 4 else 0)
         amazon_df.rename(columns={'Text': 'review'}, inplace=True)
     else:
-        raise ValueError(" Reviews.csv must have 'Text' and 'Score' columns.")
+        raise ValueError("Reviews.csv must have 'Text' and 'Score' columns.")
     amazon_df['domain'] = 'amazon'
 
     # --- Deceptive Opinion Spam Corpus ---
-    hotel_df = pd.read_csv("data/deceptive-opinion.csv").sample(1000, random_state=42)#replace this last ma hai, its only using 1000 rows for faster testing
-
+    hotel_df = pd.read_csv("data/deceptive-opinion.csv")
+    # hotel_df = pd.read_csv("data/deceptive-opinion.csv").sample(1000, random_state=42)  # ← For functional testing only
 
     # find the review column automatically
     possible_review_cols = ['review', 'text', 'Review', 'Text', 'sentence']
     review_col = next((c for c in possible_review_cols if c in hotel_df.columns), None)
     if review_col is None:
-        raise ValueError(f" No valid review column found in deceptive-opinion.csv. Columns are: {list(hotel_df.columns)}")
+        raise ValueError(f"No valid review column found in deceptive-opinion.csv. Columns are: {list(hotel_df.columns)}")
     
     # find label column automatically
     possible_label_cols = ['deceptive', 'label', 'Label', 'truth', 'is_deceptive']
     label_col = next((c for c in possible_label_cols if c in hotel_df.columns), None)
     if label_col is None:
-        raise ValueError(f" No valid label column found in deceptive-opinion.csv. Columns are: {list(hotel_df.columns)}")
+        raise ValueError(f"No valid label column found in deceptive-opinion.csv. Columns are: {list(hotel_df.columns)}")
 
     # rename to standard names
     hotel_df = hotel_df.rename(columns={review_col: 'review', label_col: 'label'})
@@ -43,11 +46,13 @@ def load_datasets():
     hotel_df['domain'] = 'hotel'
 
     # --- Yelp Labelled Dataset ---
-    yelp_df = pd.read_csv("data/Labelled Yelp Dataset.csv").sample(1000, random_state=42)#replace this last ma hai, its only using 1000 rows for faster testing
+    yelp_df = pd.read_csv("data/Labelled Yelp Dataset.csv")
+    # yelp_df = pd.read_csv("data/Labelled Yelp Dataset.csv").sample(1000, random_state=42)  # ← For functional testing only
+
     if {'Review', 'Label'}.issubset(yelp_df.columns):
         yelp_df = yelp_df[['Review', 'Label']].rename(columns={'Review': 'review', 'Label': 'label'})
     else:
-        raise ValueError(f" Expected 'Review' and 'Label' columns in Yelp dataset, got {list(yelp_df.columns)}")
+        raise ValueError(f"Expected 'Review' and 'Label' columns in Yelp dataset, got {list(yelp_df.columns)}")
     yelp_df['domain'] = 'yelp'
 
     # Normalize labels to binary (no -1 values)
@@ -114,6 +119,7 @@ def save_eval_results(df, path="results/cross_domain_eval.csv"):
     """Save evaluation results to CSV."""
     df.to_csv(path, index=False)
     print(f" Evaluation results saved to: {path}")
+
 
 def print_table_summary(df):
     """Pretty print summary of cross-domain evaluation results."""

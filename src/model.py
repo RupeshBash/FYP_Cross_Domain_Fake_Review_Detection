@@ -1,4 +1,4 @@
-import pickle
+import joblib
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -12,11 +12,11 @@ from tqdm import tqdm
 
 # --------------------------------------------
 #  BERT Setup
-# -------------------------------------------
+# --------------------------------------------
 MODEL_NAME = "bert-base-uncased"
 tokenizer = BertTokenizer.from_pretrained(MODEL_NAME)
-model = BertModel.from_pretrained(MODEL_NAME)
-model.eval()
+bert_model = BertModel.from_pretrained(MODEL_NAME)
+bert_model.eval()
 
 
 # -----------------------------------------------------------
@@ -37,19 +37,19 @@ def get_bert_embeddings(texts):
             max_length=128
         )
         with torch.no_grad():
-            outputs = model(**inputs)
+            outputs = bert_model(**inputs)
         cls_embedding = outputs.last_hidden_state[:, 0, :].squeeze().numpy()
         all_embeddings.append(cls_embedding)
     return np.vstack(all_embeddings)
 
 
 # -----------------------------------------------------------
-#  Training: Single Voting Ensemble
+#  Training: Voting Ensemble
 # -----------------------------------------------------------
 def train_model(train_df, test_df):
     """
     Train a soft Voting Ensemble (Logistic Regression + SVM + Random Forest)
-    on BERT embeddings and evaluate.
+    on BERT embeddings and evaluate performance.
     """
     # Step 1: Extract BERT features
     X_train = get_bert_embeddings(train_df['clean_text'])
@@ -67,8 +67,8 @@ def train_model(train_df, test_df):
         voting='soft'
     )
 
-    # Step 4: Train
-    print("\n Training ensemble model...")
+    # Step 4: Train ensemble
+    print("\nTraining ensemble model...")
     ensemble.fit(X_train, y_train)
 
     # Step 5: Evaluate
@@ -81,7 +81,7 @@ def train_model(train_df, test_df):
         'f1': f1_score(y_test, y_pred, average='weighted', zero_division=0)
     }
 
-    print("\n Evaluation Metrics:")
+    print("\nEvaluation Metrics:")
     for k, v in metrics.items():
         print(f"   {k}: {v:.4f}")
 
@@ -93,15 +93,12 @@ def train_model(train_df, test_df):
 # ------------------------------------------------------------
 def save_model(model, model_path='models/fake_review_model.pkl'):
     """Save trained ensemble model."""
-    with open(model_path, 'wb') as f:
-        pickle.dump(model, f)
+    joblib.dump(model, model_path)
+    print(f"\n Model saved successfully to: {model_path}")
 
 
 def load_model(model_path='models/fake_review_model.pkl'):
     """Load trained ensemble model."""
-    with open(model_path, 'rb') as f:
-        model = pickle.load(f)
+    model = joblib.load(model_path)
+    print(f"\n Model loaded from: {model_path}")
     return model
-
-
-
