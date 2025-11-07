@@ -1,137 +1,219 @@
 import streamlit as st
+from pathlib import Path
+import numpy as np
+from typing import Dict
+import random
+
 from src.model import load_model, get_bert_embeddings
 from src.preprocess import clean_text
+from src.utils import MODELS_DIR, read_metadata
 
-# --- Load model once to avoid reloading every time ---
-@st.cache_resource
-def load_prediction_model():
-    return load_model("models/fake_review_model.pkl")
-
-model = load_prediction_model()
-
-# --- Streamlit Page Setup ---
-st.set_page_config(
-    page_title="Fake Review Detector",
-    page_icon="🕵️",
-    layout="centered"
+# -------------------------
+# Page config & styling
+# -------------------------
+st.set_page_config(page_title="Fake Review Detector", page_icon="🕵️", layout="centered")
+st.markdown(
+    """
+    <style>
+      .stApp { font-family: 'Segoe UI', sans-serif; }
+      h1 { text-align: center; }
+      textarea { border-radius: 8px; }
+      .stButton>button { border-radius: 8px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
-# --- Custom Styling ---
-st.markdown("""
-    <style>
-    /* Background and layout */
-    .stApp {
-        background: radial-gradient(circle at top left, #0f2027, #203a43, #2c5364);
-        color: #e0e0e0;
-        font-family: 'Segoe UI', sans-serif;
-    }
+st.title("🕵️ Cross-Domain Fake Review Detection")
+st.write("Detect whether a review is **Fake** or **Genuine** using a BERT + Ensemble model.")
 
-    /* Title */
-    h1 {
-        color: #f8f9fa;
-        text-align: center;
-        font-size: 2.2rem !important;
-        margin-bottom: 0.5rem;
-    }
+# -------------------------
+# Discover models & metadata
+# -------------------------
+meta = read_metadata()
+available = sorted([p.name for p in Path(MODELS_DIR).glob("*.pkl")])
 
-    /* Subtext */
-    .stMarkdown {
-        text-align: center;
-        font-size: 1rem;
-        color: #bdbdbd;
-        margin-bottom: 2rem;
-    }
+models_list = [m for m in meta.get("models", []) if (Path(MODELS_DIR) / m).exists()] or available
+if not models_list:
+    st.error(" No model .pkl files found in models/. Please copy your model files and reload.")
+    st.stop()
 
-    /* Text area */
-    textarea {
-        border-radius: 10px !important;
-        border: 1px solid #6c757d !important;
-        background-color: #1c1f26 !important;
-        color: #fff !important;
-    }
+default_model = meta.get("best_by_auc")
+if default_model not in models_list:
+    default_model = models_list[0]
 
-    /* Dropdown */
-    div[data-baseweb="select"] {
-        border-radius: 10px !important;
-    }
+# -------------------------
+# Corrected label mapping
+# -------------------------
+label_map_meta = meta.get("label_map", None)
+num_to_label: Dict[int, str] = {}
 
-    /* Buttons */
-    div.stButton > button {
-        width: 100%;
-        height: 2.6rem;
-        font-size: 1rem;
-        font-weight: 600;
-        border-radius: 10px;
-        border: none;
-        transition: all 0.2s ease;
-    }
+if isinstance(label_map_meta, dict):
+    try:
+        num_to_label = {int(v): k.lower() for k, v in label_map_meta.items()}
+    except Exception:
+        num_to_label = {}
 
-    div.stButton > button:hover {
-        transform: scale(1.05);
-    }
+if not num_to_label:
+    try:
+        tmp_model = load_model(str(Path(MODELS_DIR) / default_model))
+        classes = list(map(int, getattr(tmp_model, "classes_", [0, 1])))
+    except Exception:
+        classes = [0, 1]
 
-    /* Predict button */
-    div[data-testid="column"]:first-child button {
-        background-color: #28a745 !important;
-        color: white !important;
-    }
+    if set(classes) == {0, 1}:
+        #  Corrected: your model uses 0 = genuine, 1 = fake
+        num_to_label = {0: "genuine", 1: "fake"}
+    else:
+        num_to_label = {classes[0]: "genuine", classes[-1]: "fake"}
 
-    /* Clear button */
-    div[data-testid="column"]:last-child button {
-        background-color: #6c757d !important;
-        color: white !important;
-    }
+st.info(f" Using label map: {num_to_label}")
 
-    /* Success + Info boxes */
-    .stSuccess {
-        background-color: rgba(40, 167, 69, 0.2) !important;
-        border: 1px solid #28a745 !important;
-        border-radius: 10px;
-    }
+# -------------------------
+# Sidebar controls
+# -------------------------
+with st.sidebar:
+    st.header("⚙️ Settings")
+    pick = st.selectbox("Select Model File", options=models_list, index=models_list.index(default_model))
+    max_len = st.slider("BERT max tokens", 64, 256, 128, 32)
+    default_thr = float(meta.get("thresholds", {}).get(pick, 0.5))
+    thr = st.slider("Decision threshold (Fake if P(fake) ≥ thr)", 0.01, 0.99, default_thr, 0.01)
 
-    .stInfo {
-        background-color: rgba(23, 162, 184, 0.2) !important;
-        border: 1px solid #17a2b8 !important;
-        border-radius: 10px;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# -------------------------
+# Load model (cached)
+# -------------------------
+@st.cache_resource(show_spinner=False)
+def load_model_cached(path: str):
+    return load_model(path)
 
-# --- Title ---
-st.title("Cross-Domain Fake Review Detection")
-st.write("Detect whether a review is **Fake** or **Genuine** using BERT + Ensemble model.")
+model_path = str(Path(MODELS_DIR) / pick)
+model = load_model_cached(model_path)
 
-# --- Input Section ---
-review_input = st.text_area("Enter a review", height=150, key="review_input")
-domain = st.selectbox("Select domain", ["amazon", "hotel", "yelp"], key="domain")
+# -------------------------
+# Input area
+# -------------------------
+review_input = st.text_area(" Enter a review", height=160)
+domain = st.selectbox("Select domain (optional)", ["app", "hotel", "yelp"])
 
-# --- Buttons ---
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
-    predict_button = st.button("Predict")
+    predict_btn = st.button("Predict")
 with col2:
-    clear_button = st.button("Clear")
+    clear_btn = st.button("Clear")
+with col3:
+    sample_btn = st.button("Use sample")
 
-# --- Prediction Logic ---
-if predict_button and review_input.strip():
-    clean = clean_text(review_input)
-    vec = get_bert_embeddings([clean])
-    pred = model.predict(vec)[0]
-    label = "Genuine ✅" if pred == 1 else "Fake ❌"
+SAMPLES = {
+    "app": [
+        "Absolutely love this product! Works as advertised and arrived quickly.",
+        "Received compensation for this review. Best item ever!! 10/10 would buy again!!",
+    ],
+    "yelp": [
+        "Service was slow and the food was undercooked. Not coming back.",
+        "Great ambiance. Staff repeatedly asked for 5-star review which felt pushy.",
+    ],
+    "hotel": [
+        "Room was clean, staff were friendly, and check-in was smooth.",
+        "Review seems templated: 'The best stay of my life' repeated across listings.",
+    ],
+}
 
-    st.success(f"**Prediction:** {label}")
-    st.info(f"**Domain:** {domain.title()}")
+def safe_rerun():
+    try:
+        st.rerun()
+    except AttributeError:
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
 
-elif predict_button and not review_input.strip():
-    st.warning("Please enter a review before predicting.")
+if sample_btn:
+    st.session_state["review_input"] = random.choice(SAMPLES[domain])
+    safe_rerun()
 
-# --- Clear button logic ---
-if clear_button:
-    for key in ["review_input", "domain"]:
-        if key in st.session_state:
-            del st.session_state[key]
-    st.session_state["review_input"] = ""  # explicitly clear input box
-    st.session_state["domain"] = "amazon"  # reset dropdown
-    st.rerun()
+if clear_btn:
+    st.session_state.pop("review_input", None)
+    safe_rerun()
 
+# -------------------------
+# Compute probability of 'fake'
+# -------------------------
+def compute_p_fake(probs: np.ndarray, classes: np.ndarray, num2label: Dict[int, str]) -> float:
+    class_prob = {int(c): float(p) for c, p in zip(classes, probs)}
+    fake_num = next((int(num) for num, name in num2label.items() if name == "fake"), None)
+    if fake_num is None:
+        fake_num = 1  # by default
+    return class_prob.get(fake_num, 0.0)
 
+# -------------------------
+# Prediction flow
+# -------------------------
+def predict_and_explain(text: str, threshold: float):
+    cleaned = clean_text(text)
+    with st.spinner(" Computing BERT embeddings..."):
+        vec = get_bert_embeddings([cleaned], max_len=max_len)
+    if len(vec.shape) == 1:
+        vec = vec.reshape(1, -1)
+
+    probs = model.predict_proba(vec)[0]
+    p_fake = compute_p_fake(probs, model.classes_, num_to_label)
+    is_fake = float(p_fake) >= float(threshold)
+
+    class_probs_map = {int(c): float(p) for c, p in zip(model.classes_, probs)}
+    pred_num = int(max(class_probs_map, key=class_probs_map.get))
+    pred_name = num_to_label.get(pred_num, str(pred_num))
+
+    per_est = []
+    if hasattr(model, "estimators_"):
+        for name, est in getattr(model, "named_estimators_", {}).items():
+            try:
+                p = est.predict_proba(vec)[0]
+                est_map = {int(c): float(pp) for c, pp in zip(est.classes_, p)}
+                per_est.append((name, est_map))
+            except Exception:
+                per_est.append((name, None))
+
+    return {
+        "cleaned": cleaned,
+        "p_fake": p_fake,
+        "pred_is_fake": bool(is_fake),
+        "pred_label": pred_name,
+        "predicted_numeric": pred_num,
+        "probs": class_probs_map,
+        "per_estimator": per_est,
+    }
+
+# -------------------------
+# Predict button logic
+# -------------------------
+if predict_btn:
+    if not review_input or not review_input.strip():
+        st.warning("⚠️ Please enter a review to predict.")
+    else:
+        res = predict_and_explain(review_input, thr)
+        label_display = "Fake" if res["pred_is_fake"] else "Genuine"
+        conf_pct = res["p_fake"] * 100 if res["pred_is_fake"] else (100 - res["p_fake"] * 100)
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Prediction", label_display)
+        c2.metric("Confidence", f"{conf_pct:.1f}%")
+        c3.metric("Model file", pick)
+
+        with st.expander("🧹 Cleaned text used by model"):
+            st.write(res["cleaned"])
+
+        st.write("**Model class probabilities (numeric_label → prob):**")
+        st.json(res["probs"])
+
+        st.write(f"**Probability assigned to `fake`: {res['p_fake'] * 100:.2f}%**")
+
+        if res["per_estimator"]:
+            st.write("**Per-estimator probabilities (if available):**")
+            for name, est_map in res["per_estimator"]:
+                if est_map is None:
+                    st.write(f"- {name}: (no probabilities)")
+                else:
+                    st.write(f"- {name}: {est_map}")
+
+st.markdown("---")
+st.caption("Tip: Adjust threshold in sidebar. If results seem off, verify `num_to_label` mapping above.")
