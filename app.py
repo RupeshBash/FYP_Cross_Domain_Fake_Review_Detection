@@ -1,219 +1,382 @@
+# app.py - Cross-Domain Fake Review Detection System
 import streamlit as st
 from pathlib import Path
-import numpy as np
-from typing import Dict
-import random
+import json
+import streamlit_authenticator as stauth
 
-from src.model import load_model, get_bert_embeddings
-from src.preprocess import clean_text
-from src.utils import MODELS_DIR, read_metadata
+# Local project imports
+try:
+    from src.model import load_model, get_bert_embeddings
+    from src.preprocess import clean_text
+    from src.utils import MODELS_DIR, read_metadata
+    HAS_MODEL = True
+except ImportError:
+    HAS_MODEL = False
 
-# -------------------------
-# Page config & styling
-# -------------------------
-st.set_page_config(page_title="Fake Review Detector", page_icon="🕵️", layout="centered")
-st.markdown(
-    """
-    <style>
-      .stApp { font-family: 'Segoe UI', sans-serif; }
-      h1 { text-align: center; }
-      textarea { border-radius: 8px; }
-      .stButton>button { border-radius: 8px; }
-    </style>
-    """,
-    unsafe_allow_html=True,
+# ========================
+# Page Configuration
+# ========================
+st.set_page_config(
+    page_title="Fake Review Detector",
+    page_icon="🔍",
+    layout="centered"
 )
 
-st.title("🕵️ Cross-Domain Fake Review Detection")
-st.write("Detect whether a review is **Fake** or **Genuine** using a BERT + Ensemble model.")
+# ========================
+# Authentication Settings
+# ========================
+try:
+    COOKIE_NAME = st.secrets.get("cookie_name", "fake_review_cookie")
+    COOKIE_KEY = st.secrets.get("cookie_key", "local_dev_change_this_to_a_strong_secret")
+    COOKIE_EXPIRY = st.secrets.get("cookie_expiry_days", 30)
+except Exception:
+    COOKIE_NAME = "fake_review_cookie"
+    COOKIE_KEY = "local_dev_change_this_to_a_strong_secret"
+    COOKIE_EXPIRY = 30
 
-# -------------------------
-# Discover models & metadata
-# -------------------------
-meta = read_metadata()
-available = sorted([p.name for p in Path(MODELS_DIR).glob("*.pkl")])
+# ========================
+# Credentials Management
+# ========================
+CRED_DIR = Path("credentials")
+CRED_DIR.mkdir(exist_ok=True)
+CRED_PATH = CRED_DIR / "credentials.json"
 
-models_list = [m for m in meta.get("models", []) if (Path(MODELS_DIR) / m).exists()] or available
-if not models_list:
-    st.error(" No model .pkl files found in models/. Please copy your model files and reload.")
+
+def load_credentials() -> dict:
+    """Load user credentials from JSON file"""
+    if CRED_PATH.exists():
+        try:
+            with open(CRED_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if not isinstance(data, dict):
+                    data = {"usernames": {}}
+                if "usernames" not in data:
+                    data["usernames"] = {}
+                return data
+        except json.JSONDecodeError:
+            return {"usernames": {}}
+    return {"usernames": {}}
+
+
+def save_credentials(creds: dict) -> bool:
+    """Save user credentials to JSON file"""
+    try:
+        with open(CRED_PATH, "w", encoding="utf-8") as f:
+            json.dump(creds, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+
+# Load credentials
+credentials = load_credentials()
+
+# ========================
+# Session State Initialization
+# ========================
+if 'authentication_status' not in st.session_state:
+    st.session_state['authentication_status'] = None
+if 'name' not in st.session_state:
+    st.session_state['name'] = None
+if 'username' not in st.session_state:
+    st.session_state['username'] = None
+
+# ========================
+# Authenticator Setup
+# ========================
+try:
+    authenticator = stauth.Authenticate(
+        credentials,
+        COOKIE_NAME,
+        COOKIE_KEY,
+        COOKIE_EXPIRY
+    )
+except Exception:
+    st.error("Unable to initialize authentication system")
     st.stop()
 
-default_model = meta.get("best_by_auc")
-if default_model not in models_list:
-    default_model = models_list[0]
+# ========================
+# Application Header
+# ========================
+st.title("Fake Review Detector")
+st.markdown("Detect fake reviews using AI-powered analysis")
 
-# -------------------------
-# Corrected label mapping
-# -------------------------
-label_map_meta = meta.get("label_map", None)
-num_to_label: Dict[int, str] = {}
-
-if isinstance(label_map_meta, dict):
-    try:
-        num_to_label = {int(v): k.lower() for k, v in label_map_meta.items()}
-    except Exception:
-        num_to_label = {}
-
-if not num_to_label:
-    try:
-        tmp_model = load_model(str(Path(MODELS_DIR) / default_model))
-        classes = list(map(int, getattr(tmp_model, "classes_", [0, 1])))
-    except Exception:
-        classes = [0, 1]
-
-    if set(classes) == {0, 1}:
-        #  Corrected: your model uses 0 = genuine, 1 = fake
-        num_to_label = {0: "genuine", 1: "fake"}
-    else:
-        num_to_label = {classes[0]: "genuine", classes[-1]: "fake"}
-
-st.info(f" Using label map: {num_to_label}")
-
-# -------------------------
-# Sidebar controls
-# -------------------------
+# ========================
+# Sidebar - Clean & Informative
+# ========================
 with st.sidebar:
-    st.header("⚙️ Settings")
-    pick = st.selectbox("Select Model File", options=models_list, index=models_list.index(default_model))
-    max_len = st.slider("BERT max tokens", 64, 256, 128, 32)
-    default_thr = float(meta.get("thresholds", {}).get(pick, 0.5))
-    thr = st.slider("Decision threshold (Fake if P(fake) ≥ thr)", 0.01, 0.99, default_thr, 0.01)
+    st.markdown("### How It Works")
+    st.markdown("""
+    **Step 1: Enter a Review**  
+    Copy and paste any product or service review
+    
+    **Step 2: AI Analysis**  
+    Our system analyzes language patterns and authenticity markers
+    
+    **Step 3: Get Results**  
+    Receive a confidence score showing if the review is genuine or fake
+    """)
+    
+    st.markdown("---")
+    
+    # Navigation
+    auth_choice = st.selectbox(
+        "Account",
+        ["Login", "Sign Up"],
+        label_visibility="collapsed"
+    )
 
-# -------------------------
-# Load model (cached)
-# -------------------------
-@st.cache_resource(show_spinner=False)
-def load_model_cached(path: str):
-    return load_model(path)
-
-model_path = str(Path(MODELS_DIR) / pick)
-model = load_model_cached(model_path)
-
-# -------------------------
-# Input area
-# -------------------------
-review_input = st.text_area(" Enter a review", height=160)
-domain = st.selectbox("Select domain (optional)", ["app", "hotel", "yelp"])
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    predict_btn = st.button("Predict")
-with col2:
-    clear_btn = st.button("Clear")
-with col3:
-    sample_btn = st.button("Use sample")
-
-SAMPLES = {
-    "app": [
-        "Absolutely love this product! Works as advertised and arrived quickly.",
-        "Received compensation for this review. Best item ever!! 10/10 would buy again!!",
-    ],
-    "yelp": [
-        "Service was slow and the food was undercooked. Not coming back.",
-        "Great ambiance. Staff repeatedly asked for 5-star review which felt pushy.",
-    ],
-    "hotel": [
-        "Room was clean, staff were friendly, and check-in was smooth.",
-        "Review seems templated: 'The best stay of my life' repeated across listings.",
-    ],
-}
-
-def safe_rerun():
-    try:
-        st.rerun()
-    except AttributeError:
-        try:
-            st.experimental_rerun()
-        except Exception:
-            pass
-
-if sample_btn:
-    st.session_state["review_input"] = random.choice(SAMPLES[domain])
-    safe_rerun()
-
-if clear_btn:
-    st.session_state.pop("review_input", None)
-    safe_rerun()
-
-# -------------------------
-# Compute probability of 'fake'
-# -------------------------
-def compute_p_fake(probs: np.ndarray, classes: np.ndarray, num2label: Dict[int, str]) -> float:
-    class_prob = {int(c): float(p) for c, p in zip(classes, probs)}
-    fake_num = next((int(num) for num, name in num2label.items() if name == "fake"), None)
-    if fake_num is None:
-        fake_num = 1  # by default
-    return class_prob.get(fake_num, 0.0)
-
-# -------------------------
-# Prediction flow
-# -------------------------
-def predict_and_explain(text: str, threshold: float):
-    cleaned = clean_text(text)
-    with st.spinner(" Computing BERT embeddings..."):
-        vec = get_bert_embeddings([cleaned], max_len=max_len)
-    if len(vec.shape) == 1:
-        vec = vec.reshape(1, -1)
-
-    probs = model.predict_proba(vec)[0]
-    p_fake = compute_p_fake(probs, model.classes_, num_to_label)
-    is_fake = float(p_fake) >= float(threshold)
-
-    class_probs_map = {int(c): float(p) for c, p in zip(model.classes_, probs)}
-    pred_num = int(max(class_probs_map, key=class_probs_map.get))
-    pred_name = num_to_label.get(pred_num, str(pred_num))
-
-    per_est = []
-    if hasattr(model, "estimators_"):
-        for name, est in getattr(model, "named_estimators_", {}).items():
+# ========================
+# SIGN UP INTERFACE - Compact 2-Column Layout
+# ========================
+if auth_choice == "Sign Up":
+    st.markdown("### Create Your Account")
+    st.markdown("Join to access the review analysis system")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        username = st.text_input(
+            "Username",
+            max_chars=50,
+            placeholder="Choose a username"
+        )
+        password = st.text_input(
+            "Password",
+            type="password",
+            placeholder="At least 6 characters"
+        )
+    
+    with col2:
+        name = st.text_input(
+            "Full Name",
+            max_chars=100,
+            placeholder="Your name"
+        )
+        confirm_password = st.text_input(
+            "Confirm Password",
+            type="password",
+            placeholder="Re-enter password"
+        )
+    
+    if st.button("Create Account", type="primary", use_container_width=True):
+        # Input validation
+        if not username or not name or not password:
+            st.error("Please fill in all fields")
+        elif " " in username:
+            st.error("Username cannot contain spaces")
+        elif len(username) < 3:
+            st.error("Username must be at least 3 characters")
+        elif password != confirm_password:
+            st.error("Passwords do not match")
+        elif len(password) < 6:
+            st.warning("Password should be at least 6 characters")
+        elif username in credentials.get("usernames", {}):
+            st.error(f"Username '{username}' is already taken")
+        else:
             try:
-                p = est.predict_proba(vec)[0]
-                est_map = {int(c): float(pp) for c, pp in zip(est.classes_, p)}
-                per_est.append((name, est_map))
-            except Exception:
-                per_est.append((name, None))
-
-    return {
-        "cleaned": cleaned,
-        "p_fake": p_fake,
-        "pred_is_fake": bool(is_fake),
-        "pred_label": pred_name,
-        "predicted_numeric": pred_num,
-        "probs": class_probs_map,
-        "per_estimator": per_est,
-    }
-
-# -------------------------
-# Predict button logic
-# -------------------------
-if predict_btn:
-    if not review_input or not review_input.strip():
-        st.warning("⚠️ Please enter a review to predict.")
-    else:
-        res = predict_and_explain(review_input, thr)
-        label_display = "Fake" if res["pred_is_fake"] else "Genuine"
-        conf_pct = res["p_fake"] * 100 if res["pred_is_fake"] else (100 - res["p_fake"] * 100)
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Prediction", label_display)
-        c2.metric("Confidence", f"{conf_pct:.1f}%")
-        c3.metric("Model file", pick)
-
-        with st.expander("🧹 Cleaned text used by model"):
-            st.write(res["cleaned"])
-
-        st.write("**Model class probabilities (numeric_label → prob):**")
-        st.json(res["probs"])
-
-        st.write(f"**Probability assigned to `fake`: {res['p_fake'] * 100:.2f}%**")
-
-        if res["per_estimator"]:
-            st.write("**Per-estimator probabilities (if available):**")
-            for name, est_map in res["per_estimator"]:
-                if est_map is None:
-                    st.write(f"- {name}: (no probabilities)")
+                # Hash password
+                hashed_passwords = stauth.Hasher([password]).generate()
+                
+                # Store user
+                if "usernames" not in credentials:
+                    credentials["usernames"] = {}
+                
+                credentials["usernames"][username] = {
+                    "name": name,
+                    "password": hashed_passwords[0]
+                }
+                
+                # Save to file
+                if save_credentials(credentials):
+                    st.success("Account created successfully")
+                    st.info("Switch to 'Login' in the sidebar to sign in")
+                    # Clear any session state to prevent auto-login
+                    st.session_state['authentication_status'] = None
+                    st.session_state['name'] = None
+                    st.session_state['username'] = None
                 else:
-                    st.write(f"- {name}: {est_map}")
+                    st.error("Unable to save account")
+                    
+            except Exception:
+                st.error("Account creation failed")
 
+# ========================
+# LOGIN INTERFACE - FIXED VERSION
+# ========================
+elif auth_choice == "Login":
+    # Reload credentials
+    credentials = load_credentials()
+    authenticator.credentials = credentials
+    
+    num_users = len(credentials.get("usernames", {}))
+    
+    if num_users == 0:
+        st.info("No accounts yet. Create one using 'Sign Up' in the sidebar")
+        st.stop()
+    
+    # Check if logout was requested FIRST
+    if 'logout_requested' in st.session_state and st.session_state['logout_requested']:
+        # Clear everything
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
+    
+    # Perform login
+    try:
+        name, authentication_status, username = authenticator.login('Login', 'main')
+        
+    except KeyError:
+        st.warning("Session error. Please refresh the page")
+        for key in ['name', 'authentication_status', 'username', 'logout']:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.stop()
+        
+    except Exception:
+        authentication_status = None
+        name = username = None
+    
+    # ========================
+    # AUTHENTICATED USER - Main Application
+    # ========================
+    
+    if authentication_status:
+        # LOGOUT BUTTON
+        if st.sidebar.button("🚪 Logout", key="logout_btn", type="primary"):
+            st.session_state['logout_requested'] = True
+            st.session_state['authentication_status'] = None
+            st.session_state['name'] = None
+            st.session_state['username'] = None
+            st.rerun()
+        
+        st.markdown(f"Welcome back, **{name}**")
+        st.markdown("---")
+        
+        # ========================
+        # MAIN REVIEW ANALYSIS INTERFACE
+        # ========================
+        
+        review_input = st.text_area(
+            "Review Text",
+            height=150,
+            placeholder="Paste the review you want to analyze here...",
+            label_visibility="collapsed"
+        )
+        
+        # Compact action row
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            domain = st.selectbox(
+                "Category",
+                ["app", "hotel", "yelp"],
+                label_visibility="collapsed"
+            )
+        with col2:
+            analyze_btn = st.button("Analyze", type="primary", use_container_width=True)
+
+        if analyze_btn:
+            if not review_input or not review_input.strip():
+                st.warning("Please enter some review text first")
+                
+            elif not HAS_MODEL:
+                st.info("Running in demo mode (model not available)")
+                
+            else:
+                # Model loading (cached)
+                @st.cache_resource(show_spinner=False)
+                def _load_model_cached(path: str):
+                    return load_model(path)
+
+                model_path = str(Path(MODELS_DIR) / "bert_fake_review_model.pkl")
+                
+                try:
+                    with st.spinner("Analyzing review..."):
+                        model = _load_model_cached(model_path)
+                        
+                        # Preprocessing
+                        cleaned = clean_text(review_input)
+                        emb = get_bert_embeddings([cleaned], max_len=128)
+                        
+                        if emb.ndim == 1:
+                            emb = emb.reshape(1, -1)
+
+                        # Classification
+                        probs = model.predict_proba(emb)[0]
+                        
+                        # Label mapping
+                        meta = read_metadata()
+                        num_to_label = {0: "fake", 1: "genuine"}
+
+                        # Probability calculation
+                        class_prob = {int(c): float(p) for c, p in zip(model.classes_, probs)}
+                        fake_num = next((n for n, lbl in num_to_label.items() if lbl == "fake"), 0)
+                        p_fake = class_prob.get(fake_num, 0.0)
+
+                        # Classification threshold
+                        thr = float(meta.get("thresholds", {}).get("default", 0.5))
+                        is_fake = p_fake >= thr
+                        
+                        # Calculate confidence
+                        confidence = p_fake if is_fake else (1 - p_fake)
+
+                    # ========================
+                    # RESULTS DISPLAY - Clean Color-Coded Cards
+                    # ========================
+                    
+                    st.markdown("---")
+                    
+                    if is_fake:
+                        # FAKE REVIEW - Red Warning
+                        st.error("**Likely Fake Review**")
+                        st.markdown(f"**Confidence:** {confidence*100:.1f}%")
+                        st.progress(confidence)
+                        st.markdown("""
+                        This review shows patterns commonly found in fake reviews. 
+                        Exercise caution when relying on this review.
+                        """)
+                    else:
+                        # GENUINE REVIEW - Green Success
+                        st.success("**Likely Genuine Review**")
+                        st.markdown(f"**Confidence:** {confidence*100:.1f}%")
+                        st.progress(confidence)
+                        st.markdown("""
+                        This review appears authentic based on language patterns 
+                        and writing style typical of real customer experiences.
+                        """)
+                    
+                    # Details in collapsible section
+                    with st.expander("Show Details"):
+                        st.markdown("**Processed Text:**")
+                        st.text(cleaned[:200] + "..." if len(cleaned) > 200 else cleaned)
+                        
+                        st.markdown("**Classification Probabilities:**")
+                        st.json({
+                            "Fake": f"{p_fake*100:.2f}%",
+                            "Genuine": f"{(1-p_fake)*100:.2f}%"
+                        })
+                        
+                except Exception as e:
+                    st.error("Analysis failed. Please try again")
+                    with st.expander("Need help?"):
+                        st.write("If this problem continues, please contact support")
+
+    elif authentication_status is False:
+        # Invalid credentials
+        st.error("Incorrect username or password")
+        
+        with st.expander("Need help?"):
+            st.markdown("**Tips:**")
+            st.markdown("- Usernames and passwords are case-sensitive")
+            st.markdown("- Make sure you created an account first")
+            st.markdown(f"- {num_users} account(s) are registered")
+    
+    else:
+        # No login attempt
+        st.info("Please enter your credentials above to continue")
+
+# ========================
+# Footer
+# ========================
 st.markdown("---")
-st.caption("Tip: Adjust threshold in sidebar. If results seem off, verify `num_to_label` mapping above.")
+st.caption("AI-Powered Review Analysis • Research Project")
